@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"log"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -13,7 +14,7 @@ type InMem struct {
 	users    map[string]PasskeyUser
 	sessions map[string]webauthn.SessionData
 
-	log Logger
+	log *log.Logger
 }
 
 func (i *InMem) GenSessionID() (string, error) {
@@ -27,7 +28,7 @@ func (i *InMem) GenSessionID() (string, error) {
 
 }
 
-func NewInMem(log Logger) *InMem {
+func NewInMem(log *log.Logger) *InMem {
 	return &InMem{
 		users:    make(map[string]PasskeyUser),
 		sessions: make(map[string]webauthn.SessionData),
