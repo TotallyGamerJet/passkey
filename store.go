@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"log"
+	"log/slog"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -11,10 +11,8 @@ import (
 type InMem struct {
 	// TODO: it would be nice to have a mutex here
 	// TODO: use pointers to avoid copying
-	users    map[string]PasskeyUser
+	users    map[string]*User
 	sessions map[string]webauthn.SessionData
-
-	log *log.Logger
 }
 
 func (i *InMem) GenSessionID() (string, error) {
@@ -28,35 +26,34 @@ func (i *InMem) GenSessionID() (string, error) {
 
 }
 
-func NewInMem(log *log.Logger) *InMem {
+func NewInMem() *InMem {
 	return &InMem{
-		users:    make(map[string]PasskeyUser),
+		users:    make(map[string]*User),
 		sessions: make(map[string]webauthn.SessionData),
-		log:      log,
 	}
 }
 
 func (i *InMem) GetSession(token string) (webauthn.SessionData, bool) {
-	i.log.Printf("[DEBUG] GetSession: %v", i.sessions[token])
+	slog.Debug("GetSession", "session", i.sessions[token])
 	val, ok := i.sessions[token]
 
 	return val, ok
 }
 
 func (i *InMem) SaveSession(token string, data webauthn.SessionData) {
-	i.log.Printf("[DEBUG] SaveSession: %s - %v", token, data)
+	slog.Debug("SaveSession", "token", token, "data", data)
 	i.sessions[token] = data
 }
 
 func (i *InMem) DeleteSession(token string) {
-	i.log.Printf("[DEBUG] DeleteSession: %v", token)
+	slog.Debug("DeleteSession", "token", token)
 	delete(i.sessions, token)
 }
 
-func (i *InMem) GetOrCreateUser(userName string) PasskeyUser {
-	i.log.Printf("[DEBUG] GetOrCreateUser: %v", userName)
+func (i *InMem) GetOrCreateUser(userName string) *User {
+	slog.Debug("GetOrCreateUser", "user", userName)
 	if _, ok := i.users[userName]; !ok {
-		i.log.Printf("[DEBUG] GetOrCreateUser: creating new user: %v", userName)
+		slog.Debug("creating new user", "user", userName)
 		i.users[userName] = &User{
 			ID:          []byte(userName),
 			DisplayName: userName,
@@ -67,8 +64,7 @@ func (i *InMem) GetOrCreateUser(userName string) PasskeyUser {
 	return i.users[userName]
 }
 
-func (i *InMem) SaveUser(user PasskeyUser) {
-	i.log.Printf("[DEBUG] SaveUser: %v", user.WebAuthnName())
-	i.log.Printf("[DEBUG] SaveUser: %v", user)
+func (i *InMem) SaveUser(user *User) {
+	slog.Debug("SaveUser", "user", user.WebAuthnName())
 	i.users[user.WebAuthnName()] = user
 }

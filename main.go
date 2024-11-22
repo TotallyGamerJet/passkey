@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"os"
@@ -20,12 +20,6 @@ var (
 	webAuthn  *webauthn.WebAuthn
 	datastore *InMem
 )
-
-type PasskeyUser interface {
-	webauthn.User
-	AddCredential(*webauthn.Credential)
-	UpdateCredential(*webauthn.Credential)
-}
 
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="en">
@@ -67,79 +61,70 @@ const htmlTemplate = `<!DOCTYPE html>
 var indexTemplate = template.Must(template.New("").Parse(htmlTemplate))
 
 func main() {
-	proto := getEnv("PROTO", "https")
-	host := getEnv("HOST", "localhost")
-	port := getEnv("PORT", ":8080")
+	proto := "https"
+	host := "localhost"
+	port := ":8080"
 	origin := fmt.Sprintf("%s://%s%s", proto, host, port)
 
-	log.Printf("[INFO] make webauthn config")
 	wconfig := &webauthn.Config{
 		RPDisplayName: "Go Webauthn",    // Display Name for your site
 		RPID:          host,             // Generally the FQDN for your site
 		RPOrigins:     []string{origin}, // The origin URLs allowed for WebAuthn
 	}
 
-	log.Printf("[INFO] create webauthn")
 	var err error
 	if webAuthn, err = webauthn.New(wconfig); err != nil {
-		fmt.Printf("[FATA] %s", err.Error())
+		slog.Error(err.Error())
 		os.Exit(1)
 	}
 
-	log.Printf("[INFO] create datastore")
-	datastore = NewInMem(log.Default())
+	datastore = NewInMem()
 
-	log.Printf("[INFO] register routes")
-	// Serve the web files
 	http.Handle("/src/", http.StripPrefix("/src/", http.FileServer(http.Dir("./web"))))
 	http.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
 		_ = indexTemplate.Execute(w, nil)
 	})
-	// Add auth the routes
 	http.HandleFunc("GET /register", BeginRegistration)
 	http.HandleFunc("POST /register", FinishRegistration)
 	http.HandleFunc("GET /login", BeginLogin)
 	http.HandleFunc("POST /login", FinishLogin)
+	http.Handle("GET /private", LoggedInMiddleware(http.HandlerFunc(PrivatePage)))
 
-	http.Handle("/private", LoggedInMiddleware(http.HandlerFunc(PrivatePage)))
-
-	// Start the server
-	log.Printf("[INFO] start server at %s", origin)
+	slog.Info("starting server", "url", origin)
 	// Generate self-signed certificates for development
 	// go run $GOROOT/src/crypto/tls/generate_cert.go --host="localhost"
 	if err := http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil); err != nil {
-		fmt.Println(err)
+		slog.Error("failed to listen and serve", "err", err.Error())
 	}
 }
 
 func BeginRegistration(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[INFO] begin registration ----------------------\\")
 	if err := r.ParseForm(); err != nil {
-		log.Fatal(err)
+		slog.ErrorContext(r.Context(), "form parse error", "err", err.Error())
 		return
 	}
 	email, err := mail.ParseAddress(r.FormValue("email"))
 	if err != nil {
+		slog.DebugContext(r.Context(), "email parse error", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "incorrect email format")
 		return
 	}
-	user := datastore.GetOrCreateUser(email.Address) // Find or create the new user
+	user := datastore.GetOrCreateUser(email.Address)
 
 	options, session, err := webAuthn.BeginRegistration(user)
 	if err != nil {
-		log.Println(fmt.Sprintf("can't begin registration: %s", err.Error()))
+		slog.Info("can't begin registration", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
 	}
 
-	// Make a session key and store the sessionData values
 	t, err := datastore.GenSessionID()
 	if err != nil {
-		log.Printf("[ERRO] can't generate session id: %s", err.Error())
+		slog.ErrorContext(r.Context(), "can't generate session id", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "incorrect email format")
+		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
 	}
 
@@ -152,11 +137,11 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   3600,
 		Secure:   true,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, // TODO: SameSiteStrictMode maybe?
+		SameSite: http.SameSiteStrictMode,
 	})
 	optionsJson, err := json.Marshal(options)
 	if err != nil {
-		log.Println(fmt.Sprintf("JSON marshaling of options failed: %s", err.Error()))
+		slog.ErrorContext(r.Context(), "can't marshal options", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
@@ -171,10 +156,9 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 }
 
 func FinishRegistration(w http.ResponseWriter, r *http.Request) {
-	// Get the session key from cookie
-	sid, err := r.Cookie("rid")
+	rid, err := r.Cookie("rid")
 	if err != nil {
-		log.Printf("[ERROR] can't get session id: %s", err.Error())
+		slog.WarnContext(r.Context(), "can't get session id", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
@@ -184,79 +168,71 @@ func FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		Value: "",
 	})
 	if err = r.ParseForm(); err != nil {
-		log.Printf("[ERROR] can't parse form: %s", err.Error())
+		slog.WarnContext(r.Context(), "can't parse form", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(r.FormValue("data"))
 	if err != nil {
-		log.Printf("[ERROR] can't decode form data: %s", err.Error())
+		slog.ErrorContext(r.Context(), "can't decode form data", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
 	}
-	// Get the session data stored from the function above
-	session, _ := datastore.GetSession(sid.Value) // FIXME: cover invalid session
+	session, _ := datastore.GetSession(rid.Value) // FIXME: cover invalid session
 
-	// In out example username == userID, but in real world it should be different
 	user := datastore.GetOrCreateUser(string(session.UserID)) // Get the user
 	cred, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(data))
 	if err != nil {
-		log.Printf("[ERROR] can't parse body: %s", err.Error())
-		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
-		return
-	}
-	//credential, err := webAuthn.FinishRegistration(user, session, r)
-	credential, err := webAuthn.CreateCredential(user, session, cred)
-	if err != nil {
-		msg := fmt.Sprintf("can't finish registration: %s", err.Error())
-		log.Printf("[ERRO] %s", msg)
+		slog.WarnContext(r.Context(), "can't parse body", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
 		return
 	}
 
-	// If creation was successful, store the credential object
+	credential, err := webAuthn.CreateCredential(user, session, cred)
+	if err != nil {
+		slog.WarnContext(r.Context(), "can't create credential", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		return
+	}
+
 	user.AddCredential(credential)
 	datastore.SaveUser(user)
-	// Delete the session data
-	datastore.DeleteSession(sid.Value)
-	log.Printf("[INFO] finish registration ----------------------/")
-	JSONResponse(w, "Registration Success", http.StatusOK) // Handle next steps
+	datastore.DeleteSession(rid.Value)
+	w.Header().Set("HX-Reswap", "innerHTML")
+	indexTemplate.ExecuteTemplate(w, "form", "registration successful")
 }
 
 func BeginLogin(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[INFO] begin login ----------------------\\")
-
 	if err := r.ParseForm(); err != nil {
-		log.Fatal(err)
+		slog.WarnContext(r.Context(), "form parse error", "err", err.Error())
 		return
 	}
 	email, err := mail.ParseAddress(r.FormValue("email"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusOK)
+		slog.DebugContext(r.Context(), "email parse error", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "incorrect email format")
 		return
 	}
 
-	user := datastore.GetOrCreateUser(email.Address) // Find the user
+	user := datastore.GetOrCreateUser(email.Address)
 
 	options, session, err := webAuthn.BeginLogin(user)
 	if err != nil {
-		msg := fmt.Sprintf("can't begin login: %s", err.Error())
-		log.Printf("[ERRO] %s", msg)
-		JSONResponse(w, msg, http.StatusBadRequest)
-
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
 		return
 	}
 
-	// Make a session key and store the sessionData values
 	t, err := datastore.GenSessionID()
 	if err != nil {
-		log.Printf("[ERRO] can't generate session id: %s", err.Error())
-
-		panic(err) // TODO: handle error
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		return
 	}
 	datastore.SaveSession(t, *session)
 
@@ -272,7 +248,9 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 
 	optionsJson, err := json.Marshal(options)
 	if err != nil {
-		fmt.Fprintf(w, "login failed")
+		slog.ErrorContext(r.Context(), "json marshal error", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
 		return
 	}
 
@@ -286,10 +264,9 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func FinishLogin(w http.ResponseWriter, r *http.Request) {
-	// Get the session key from cookie
 	lid, err := r.Cookie("lid")
 	if err != nil {
-		fmt.Fprintf(w, "login failed")
+		slog.ErrorContext(r.Context(), "missing lid cookie", "err", err.Error())
 		return
 	}
 	defer datastore.DeleteSession(lid.Value)
@@ -299,45 +276,49 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err := r.ParseForm(); err != nil {
-		fmt.Fprintf(w, "login failed")
+		slog.DebugContext(r.Context(), "form parse error", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(r.FormValue("data"))
 	if err != nil {
-		fmt.Fprintf(w, "login failed")
+		slog.DebugContext(r.Context(), "can't decode form data", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
 		return
 	}
-	// Get the session data stored from the function above
 	session, _ := datastore.GetSession(lid.Value) // FIXME: cover invalid session
-
-	// In out example username == userID, but in real world it should be different
-	user := datastore.GetOrCreateUser(string(session.UserID)) // Get the user
+	user := datastore.GetOrCreateUser(string(session.UserID))
 
 	cred, err := protocol.ParseCredentialRequestResponseBody(bytes.NewBuffer(data))
 	if err != nil {
-		panic(err)
+		slog.WarnContext(r.Context(), "can't parse cred request body", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		return
 	}
 	credential, err := webAuthn.ValidateLogin(user, session, cred)
 	if err != nil {
-		log.Printf("[ERRO] can't finish login: %s", err.Error())
-		panic(err)
+		slog.DebugContext(r.Context(), "invalid login", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		return
 	}
 
-	// Handle credential.Authenticator.CloneWarning
 	if credential.Authenticator.CloneWarning {
-		log.Printf("[WARN] can't finish login: %s", "CloneWarning")
+		slog.WarnContext(r.Context(), "can't finish login: CloneWarning")
 	}
 
-	// If login was successful, update the credential object
 	user.UpdateCredential(credential)
 	datastore.SaveUser(user)
 
-	// Add the new session cookie
 	t, err := datastore.GenSessionID()
 	if err != nil {
-		log.Printf("[ERRO] can't generate session id: %s", err.Error())
-
-		panic(err) // TODO: handle error
+		slog.ErrorContext(r.Context(), "can't generate session id", "err", err.Error())
+		w.Header().Set("HX-Reswap", "innerHTML")
+		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		return
 	}
 
 	datastore.SaveSession(t, webauthn.SessionData{
@@ -353,29 +334,13 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode, // TODO: SameSiteStrictMode maybe?
 	})
 
-	log.Printf("[INFO] finish login ----------------------/")
-	JSONResponse(w, "Login Success", http.StatusOK)
+	w.Header().Set("HX-Reswap", "innerHTML")
+	indexTemplate.ExecuteTemplate(w, "form", "login successful")
 }
 
 func PrivatePage(w http.ResponseWriter, r *http.Request) {
 	// just show "Hello, World!" for now
 	_, _ = w.Write([]byte("Hello, World!"))
-}
-
-// JSONResponse is a helper function to send json response
-func JSONResponse(w http.ResponseWriter, data interface{}, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-// getEnv is a helper function to get the environment variable
-func getEnv(key, def string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-
-	return def
 }
 
 func LoggedInMiddleware(next http.Handler) http.Handler {
@@ -384,21 +349,29 @@ func LoggedInMiddleware(next http.Handler) http.Handler {
 
 		sid, err := r.Cookie("sid")
 		if err != nil {
+			slog.DebugContext(r.Context(), "redirecting", "err", err.Error())
 			http.Redirect(w, r, "/", http.StatusSeeOther)
-
 			return
 		}
 
 		session, ok := datastore.GetSession(sid.Value)
 		if !ok {
+			slog.DebugContext(r.Context(), "redirecting", "err", "session not found")
+			http.SetCookie(w, &http.Cookie{
+				Name:  "lid",
+				Value: "",
+			})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
-
 			return
 		}
 
 		if session.Expires.Before(time.Now()) {
+			slog.DebugContext(r.Context(), "redirecting", "err", "session expired")
+			http.SetCookie(w, &http.Cookie{
+				Name:  "lid",
+				Value: "",
+			})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
-
 			return
 		}
 
