@@ -38,15 +38,14 @@ const htmlTemplate = `<!DOCTYPE html>
 
 {{ define "form" }}
 <div class="relative flex min-h-screen flex-col justify-center overflow-hidden bg-gray-50 py-6 sm:py-12">
-  <img src="/img/beams.jpg" alt="" class="absolute left-1/2 top-1/2 max-w-none -translate-x-1/2 -translate-y-1/2" width="1308" />
-  <div class="absolute inset-0 bg-[url(/img/grid.svg)] bg-center [mask-image:linear-gradient(180deg,white,rgba(255,255,255,0))]"></div>
   <div class="relative bg-white px-6 pb-8 pt-10 shadow-xl ring-1 ring-gray-900/5 sm:mx-auto sm:max-w-lg sm:rounded-lg sm:px-10">
     <div class="mx-auto max-w-md">
       <form id="login" class="group mx-auto max-w-sm">
         <div class="mb-5">
           <label for="email" class="mb-2 block text-sm font-medium text-gray-900 dark:text-white">Your email</label>
-          <span class="peer mb-2 block text-sm font-light text-red-600">{{ . }}</span>
-          <input autocomplete="email" name="email" type="email" id="email" class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-blue-500 peer-[&:not(:empty)]:border-red-400 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500" placeholder="name@flowbite.com" required />
+          <span class="peer mb-2 block text-sm font-light text-red-600">{{ .ErrorMsg }}</span>
+          <span class="mb-2 block text-sm font-light text-green-600">{{ .SuccessMsg }}</span>
+          <input autocomplete="email" name="email" type="email" id="email" value="{{ .Email }}" class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-blue-500 peer-[&:not(:empty)]:border-red-400 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500" placeholder="name@flowbite.com" required />
         </div>
         <button id="register-button" hx-get="/register" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #login-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Register</button>
         <button id="login-button" hx-get="/login" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #register-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Sign in</button>
@@ -58,6 +57,12 @@ const htmlTemplate = `<!DOCTYPE html>
 {{ end }}
 `
 
+type Form struct {
+	ErrorMsg   string
+	SuccessMsg string
+	Email      string
+}
+
 var indexTemplate = template.Must(template.New("").Parse(htmlTemplate))
 
 func main() {
@@ -65,6 +70,8 @@ func main() {
 	host := "localhost"
 	port := ":8080"
 	origin := fmt.Sprintf("%s://%s%s", proto, host, port)
+
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	wconfig := &webauthn.Config{
 		RPDisplayName: "Go Webauthn",    // Display Name for your site
@@ -82,6 +89,7 @@ func main() {
 
 	http.Handle("/src/", http.StripPrefix("/src/", http.FileServer(http.Dir("./web"))))
 	http.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /")
 		_ = indexTemplate.Execute(w, nil)
 	})
 	http.HandleFunc("GET /register", BeginRegistration)
@@ -107,7 +115,7 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.DebugContext(r.Context(), "email parse error", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "incorrect email format")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "incorrect email format"})
 		return
 	}
 	user := datastore.GetOrCreateUser(email.Address)
@@ -116,7 +124,7 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Info("can't begin registration", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed", Email: email.String()})
 		return
 	}
 
@@ -124,7 +132,7 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "can't generate session id", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed", Email: email.String()})
 		return
 	}
 
@@ -143,7 +151,7 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "can't marshal options", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed", Email: email.String()})
 		return
 	}
 	fmt.Fprintf(w, `
@@ -160,7 +168,7 @@ func FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "can't get session id", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed"})
 		return
 	}
 	defer http.SetCookie(w, &http.Cookie{
@@ -170,14 +178,14 @@ func FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	if err = r.ParseForm(); err != nil {
 		slog.WarnContext(r.Context(), "can't parse form", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed"})
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(r.FormValue("data"))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "can't decode form data", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed"})
 		return
 	}
 	session, _ := datastore.GetSession(rid.Value) // FIXME: cover invalid session
@@ -187,7 +195,7 @@ func FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "can't parse body", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed"})
 		return
 	}
 
@@ -195,7 +203,7 @@ func FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "can't create credential", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "registration failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed"})
 		return
 	}
 
@@ -203,7 +211,7 @@ func FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	datastore.SaveUser(user)
 	datastore.DeleteSession(rid.Value)
 	w.Header().Set("HX-Reswap", "innerHTML")
-	indexTemplate.ExecuteTemplate(w, "form", "registration successful")
+	indexTemplate.ExecuteTemplate(w, "form", Form{SuccessMsg: "registration successful"})
 }
 
 func BeginLogin(w http.ResponseWriter, r *http.Request) {
@@ -215,7 +223,7 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.DebugContext(r.Context(), "email parse error", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "incorrect email format")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "incorrect email format"})
 		return
 	}
 
@@ -224,14 +232,14 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 	options, session, err := webAuthn.BeginLogin(user)
 	if err != nil {
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 
 	t, err := datastore.GenSessionID()
 	if err != nil {
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 	datastore.SaveSession(t, *session)
@@ -250,7 +258,7 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "json marshal error", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 
@@ -278,14 +286,14 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		slog.DebugContext(r.Context(), "form parse error", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(r.FormValue("data"))
 	if err != nil {
 		slog.DebugContext(r.Context(), "can't decode form data", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 	session, _ := datastore.GetSession(lid.Value) // FIXME: cover invalid session
@@ -295,14 +303,14 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "can't parse cred request body", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 	credential, err := webAuthn.ValidateLogin(user, session, cred)
 	if err != nil {
 		slog.DebugContext(r.Context(), "invalid login", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 
@@ -317,7 +325,7 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "can't generate session id", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", "login failed")
+		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
 		return
 	}
 
@@ -335,7 +343,7 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("HX-Reswap", "innerHTML")
-	indexTemplate.ExecuteTemplate(w, "form", "login successful")
+	indexTemplate.ExecuteTemplate(w, "form", Form{SuccessMsg: "login successful"})
 }
 
 func PrivatePage(w http.ResponseWriter, r *http.Request) {
