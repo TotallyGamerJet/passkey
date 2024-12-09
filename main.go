@@ -29,10 +29,10 @@ const htmlTemplate = `<!DOCTYPE html>
     <title>Passkey</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+	<script src="/src/index.es5.umd.min.js"></script>
 </head>
 <body>
 {{ template "form" . }}
-<script src="/src/index.es5.umd.min.js"></script>
 </body>
 </html>
 
@@ -42,14 +42,22 @@ const htmlTemplate = `<!DOCTYPE html>
     <div class="mx-auto max-w-md">
       <form id="login" class="group mx-auto flex max-w-sm flex-col sm:flex-none">
         <div class="mb-5">
-          <label for="email" class="mb-2 block text-sm font-medium text-gray-900 dark:text-white">Your email</label>
+          <label for="email" class="mb-2 flex flex-row content-center text-sm font-medium text-gray-900 dark:text-white"
+            >Your email
+            <svg id="loader" class="htmx-indicator ml-2 h-4 w-4" width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <style>
+                .spinner_P7sC{transform-origin:center;animation:spinner_svv2 .75s infinite linear}@keyframes spinner_svv2{100%{transform:rotate(360deg)}}
+              </style>
+              <path d="M10.14,1.16a11,11,0,0,0-9,8.92A1.59,1.59,0,0,0,2.46,12,1.52,1.52,0,0,0,4.11,10.7a8,8,0,0,1,6.66-6.61A1.42,1.42,0,0,0,12,2.69h0A1.57,1.57,0,0,0,10.14,1.16Z" class="spinner_P7sC" />
+            </svg>
+          </label>
           <span class="peer mb-2 block text-sm font-light text-red-600">{{ .ErrorMsg }}</span>
           <span class="mb-2 block text-sm font-light text-green-600">{{ .SuccessMsg }}</span>
           <input autocomplete="email" name="email" type="email" id="email" value="{{ .Email }}" placeholder="name@email.com" required class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-blue-500 peer-[&:not(:empty)]:border-red-400 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500" />
         </div>
         <div class="flex flex-col sm:flex-row">
-          <button id="register-button" hx-get="/register" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #login-button, #email" type="submit" class="mb-4 w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:mb-0 sm:mr-4 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Register</button>
-          <button id="login-button" hx-get="/login" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #register-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Sign in</button>
+          <button id="register-button" hx-get="/register" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#loader" hx-disabled-elt="this, #login-button, #email" type="submit" class="mb-4 w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:mb-0 sm:mr-4 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Register</button>
+          <button id="login-button" hx-get="/login" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#loader" hx-disabled-elt="this, #register-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Sign in</button>
         </div>
       </form>
     </div>
