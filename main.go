@@ -40,15 +40,17 @@ const htmlTemplate = `<!DOCTYPE html>
 <div class="relative flex min-h-screen flex-col justify-center overflow-hidden bg-gray-50 py-6 sm:py-12">
   <div class="relative bg-white px-6 pb-8 pt-10 shadow-xl ring-1 ring-gray-900/5 sm:mx-auto sm:max-w-lg sm:rounded-lg sm:px-10">
     <div class="mx-auto max-w-md">
-      <form id="login" class="group mx-auto max-w-sm">
+      <form id="login" class="group mx-auto flex max-w-sm flex-col sm:flex-none">
         <div class="mb-5">
           <label for="email" class="mb-2 block text-sm font-medium text-gray-900 dark:text-white">Your email</label>
           <span class="peer mb-2 block text-sm font-light text-red-600">{{ .ErrorMsg }}</span>
           <span class="mb-2 block text-sm font-light text-green-600">{{ .SuccessMsg }}</span>
-          <input autocomplete="email" name="email" type="email" id="email" value="{{ .Email }}" class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-blue-500 peer-[&:not(:empty)]:border-red-400 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500" placeholder="name@flowbite.com" required />
+          <input autocomplete="email" name="email" type="email" id="email" value="{{ .Email }}" placeholder="name@email.com" required class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-blue-500 focus:ring-blue-500 peer-[&:not(:empty)]:border-red-400 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 dark:focus:border-blue-500 dark:focus:ring-blue-500" />
         </div>
-        <button id="register-button" hx-get="/register" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #login-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Register</button>
-        <button id="login-button" hx-get="/login" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #register-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Sign in</button>
+        <div class="flex flex-col sm:flex-row">
+          <button id="register-button" hx-get="/register" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #login-button, #email" type="submit" class="mb-4 w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:mb-0 sm:mr-4 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Register</button>
+          <button id="login-button" hx-get="/login" hx-include="[name='email']" hx-swap="beforeend" hx-target="body" hx-indicator="#login" hx-disabled-elt="this, #register-button, #email" type="submit" class="w-full rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-slate-300 sm:w-auto dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">Sign in</button>
+        </div>
       </form>
     </div>
   </div>
@@ -147,7 +149,7 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
-	optionsJson, err := json.Marshal(options)
+	optionsJson, err := json.Marshal(options.Response)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "can't marshal options", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
@@ -156,9 +158,12 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, `
 <script id="script">
-	SimpleWebAuthnBrowser.startRegistration(JSON.parse('%s').publicKey)
+	SimpleWebAuthnBrowser.startRegistration({ optionsJSON: JSON.parse('%s') })
 		.then(attestationResponse => htmx.ajax('POST', '/register', {target: 'body', values: {data: btoa(JSON.stringify(attestationResponse))}}))
-		.catch(htmx.ajax('GET', '/', 'body'))
+		.catch((reason) => {
+            console.log(reason)
+            htmx.ajax('GET', '/', 'body')
+		})
 		.finally(htmx.find('#script').remove());
 </script>`, optionsJson)
 }
@@ -232,14 +237,14 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 	options, session, err := webAuthn.BeginLogin(user)
 	if err != nil {
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
+		indexTemplate.ExecuteTemplate(w, "form", Form{Email: email.Address, ErrorMsg: "login failed"})
 		return
 	}
 
 	t, err := datastore.GenSessionID()
 	if err != nil {
 		w.Header().Set("HX-Reswap", "innerHTML")
-		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "login failed"})
+		indexTemplate.ExecuteTemplate(w, "form", Form{Email: email.Address, ErrorMsg: "login failed"})
 		return
 	}
 	datastore.SaveSession(t, *session)
@@ -254,7 +259,7 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	})
 
-	optionsJson, err := json.Marshal(options)
+	optionsJson, err := json.Marshal(options.Response)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "json marshal error", "err", err.Error())
 		w.Header().Set("HX-Reswap", "innerHTML")
@@ -264,9 +269,12 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, `
 <script id="script">
-  SimpleWebAuthnBrowser.startAuthentication(JSON.parse('%s').publicKey)
+  SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: JSON.parse('%s') })
 	.then(attestationResponse => htmx.ajax('POST', '/login', {target: 'body', values: {data: btoa(JSON.stringify(attestationResponse))}}))
-	.catch(htmx.ajax('GET', '/', 'body'))
+	.catch((reason) => {
+        console.log(reason)
+        htmx.ajax('GET', '/', 'body')
+	})
 	.finally(htmx.find('#script').remove());
 </script>`, optionsJson)
 }
@@ -339,7 +347,7 @@ func FinishLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   3600,
 		Secure:   true,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, // TODO: SameSiteStrictMode maybe?
+		SameSite: http.SameSiteStrictMode,
 	})
 
 	w.Header().Set("HX-Reswap", "innerHTML")
@@ -366,8 +374,9 @@ func LoggedInMiddleware(next http.Handler) http.Handler {
 		if !ok {
 			slog.DebugContext(r.Context(), "redirecting", "err", "session not found")
 			http.SetCookie(w, &http.Cookie{
-				Name:  "lid",
-				Value: "",
+				Name:   "sid",
+				Value:  "",
+				MaxAge: -1,
 			})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
@@ -376,8 +385,9 @@ func LoggedInMiddleware(next http.Handler) http.Handler {
 		if session.Expires.Before(time.Now()) {
 			slog.DebugContext(r.Context(), "redirecting", "err", "session expired")
 			http.SetCookie(w, &http.Cookie{
-				Name:  "lid",
-				Value: "",
+				Name:   "sid",
+				Value:  "",
+				MaxAge: -1,
 			})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
