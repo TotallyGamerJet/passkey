@@ -102,6 +102,17 @@ func main() {
 		slog.Info("GET /")
 		_ = indexTemplate.Execute(w, nil)
 	})
+	http.HandleFunc("POST /log", func(w http.ResponseWriter, r *http.Request) {
+		var b [1000]byte
+		n, err := r.Body.Read(b[:])
+		if err != nil {
+			slog.Error(err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+		slog.InfoContext(r.Context(), "POST /log", "msg", string(b[:n]))
+	})
 	http.HandleFunc("GET /register", BeginRegistration)
 	http.HandleFunc("POST /register", FinishRegistration)
 	http.HandleFunc("GET /login", BeginLogin)
@@ -170,7 +181,21 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 		.then(attestationResponse => htmx.ajax('POST', '/register', {target: 'body', values: {data: btoa(JSON.stringify(attestationResponse))}}))
 		.catch((reason) => {
             console.log(reason)
-            htmx.ajax('GET', '/', 'body')
+            fetch('/log', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'text/plain'
+				},
+				body: reason
+			})
+			.then(response => {
+				if (!response.ok) {
+					console.error('Failed to log reason:', response.statusText);
+				}
+			})
+			.catch(error => {
+				console.error('Error sending log:', error);
+			});
 		})
 		.finally(htmx.find('#script').remove());
 </script>`, optionsJson)
@@ -281,6 +306,21 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 	.then(attestationResponse => htmx.ajax('POST', '/login', {target: 'body', values: {data: btoa(JSON.stringify(attestationResponse))}}))
 	.catch((reason) => {
         console.log(reason)
+		fetch('/log', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'text/plain'
+			},
+			body: reason
+		})
+		.then(response => {
+			if (!response.ok) {
+				console.error('Failed to log reason:', response.statusText);
+			}
+		})
+		.catch(error => {
+			console.error('Error sending log:', error);
+		});
         htmx.ajax('GET', '/', 'body')
 	})
 	.finally(htmx.find('#script').remove());
