@@ -5,7 +5,7 @@ This is a simple example of WebAuthn and Passkey authentication using Go, Tailwi
 ## Run
 
 ```shell
-$ go run $GOROOT/src/crypto/tls/generate_cert.go --host="localhost"
+$ go generate ./...
 $ go build -o passkeys
 $ ./passkeys
 ```
