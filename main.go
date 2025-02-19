@@ -134,6 +134,8 @@ func getIPv4() (net.IP, error) {
 	return nil, errors.New("no ipv4 address found")
 }
 
+//go:generate go run generate_cert.go -ca --host="webauthn-test.local"
+
 func main() {
 	const (
 		proto = "https"
@@ -190,7 +192,7 @@ func main() {
 
 	slog.Info("starting server", "url", origin)
 	// Generate self-signed certificates for development and trust it in your OS
-	// go run $GOROOT/src/crypto/tls/generate_cert.go -ca --host="webauthn-test.local"
+	// go generate ./...
 	if err = http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil); err != nil {
 		slog.Error("failed to listen and serve", "err", err.Error())
 	}
