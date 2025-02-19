@@ -81,40 +81,41 @@ type Form struct {
 
 var indexTemplate = template.Must(template.New("").Parse(htmlTemplate))
 
-func createMDNSService(host string) error {
+func createMDNSService(host string) (*mdns.Conn, error) {
 	addr4, err := net.ResolveUDPAddr("udp4", mdns.DefaultAddressIPv4)
 	if err != nil {
-		return fmt.Errorf("resolve udp4 addr err: %v", err)
+		return nil, fmt.Errorf("resolve udp4 addr err: %v", err)
 	}
 
 	addr6, err := net.ResolveUDPAddr("udp6", mdns.DefaultAddressIPv6)
 	if err != nil {
-		return fmt.Errorf("resolve udp6 addr err: %v", err)
+		return nil, fmt.Errorf("resolve udp6 addr err: %v", err)
 	}
 
 	l4, err := net.ListenUDP("udp4", addr4)
 	if err != nil {
-		return fmt.Errorf("listen upd4 err: %v", err)
+		return nil, fmt.Errorf("listen upd4 err: %v", err)
 	}
 
 	l6, err := net.ListenUDP("udp6", addr6)
 	if err != nil {
-		return fmt.Errorf("listen upd6 err: %v", err)
+		return nil, fmt.Errorf("listen upd6 err: %v", err)
 	}
 	ip, err := getIPv4()
 	if err != nil {
-		return fmt.Errorf("get ip4 err: %v", err)
+		return nil, fmt.Errorf("get ip4 err: %v", err)
 	}
-	_, err = mdns.Server(ipv4.NewPacketConn(l4), ipv6.NewPacketConn(l6), &mdns.Config{
+	var conn *mdns.Conn
+	conn, err = mdns.Server(ipv4.NewPacketConn(l4), ipv6.NewPacketConn(l6), &mdns.Config{
 		LocalNames:   []string{host},
 		LocalAddress: ip,
 	})
 	if err != nil {
-		return fmt.Errorf("mdns server err: %v", err)
+		return nil, fmt.Errorf("mdns server err: %v", err)
 	}
 
 	slog.Info("mDNS service registered", "host", host, "ip", ip)
-	return nil
+	return conn, nil
 }
 
 func getIPv4() (net.IP, error) {
@@ -144,10 +145,13 @@ func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	// TODO: only when running locally
-	if err := createMDNSService(host); err != nil {
+	var conn *mdns.Conn
+	var err error
+	if conn, err = createMDNSService(host); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
+	defer conn.Close()
 
 	wconfig := &webauthn.Config{
 		RPDisplayName: "Go Webauthn",    // Display Name for your site
@@ -155,7 +159,6 @@ func main() {
 		RPOrigins:     []string{origin}, // The origin URLs allowed for WebAuthn
 	}
 
-	var err error
 	if webAuthn, err = webauthn.New(wconfig); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
@@ -188,7 +191,7 @@ func main() {
 	slog.Info("starting server", "url", origin)
 	// Generate self-signed certificates for development and trust it in your OS
 	// go run $GOROOT/src/crypto/tls/generate_cert.go -ca --host="webauthn-test.local"
-	if err := http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil); err != nil {
+	if err = http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil); err != nil {
 		slog.Error("failed to listen and serve", "err", err.Error())
 	}
 }
