@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"io"
+	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/mail"
 	"os"
@@ -14,6 +18,9 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/pion/mdns/v2"
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 var (
@@ -75,13 +82,66 @@ type Form struct {
 
 var indexTemplate = template.Must(template.New("").Parse(htmlTemplate))
 
+func createMDNSService(host string) {
+	addr4, err := net.ResolveUDPAddr("udp4", mdns.DefaultAddressIPv4)
+	if err != nil {
+		panic(err)
+	}
+
+	addr6, err := net.ResolveUDPAddr("udp6", mdns.DefaultAddressIPv6)
+	if err != nil {
+		panic(err)
+	}
+
+	l4, err := net.ListenUDP("udp4", addr4)
+	if err != nil {
+		panic(err)
+	}
+
+	l6, err := net.ListenUDP("udp6", addr6)
+	if err != nil {
+		panic(err)
+	}
+	ip, err := getIp4()
+	if err != nil {
+		panic(err)
+	}
+	_, err = mdns.Server(ipv4.NewPacketConn(l4), ipv6.NewPacketConn(l6), &mdns.Config{
+		LocalNames:   []string{host},
+		LocalAddress: ip,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("mDNS service registered as " + host)
+}
+
+func getIp4() (net.IP, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ipNet.IP.To4() != nil {
+				return ipNet.IP, nil
+			}
+		}
+	}
+	return nil, errors.New("no ipv4 address found")
+}
+
 func main() {
 	proto := "https"
-	host := "localhost"
-	port := ":8080"
-	origin := fmt.Sprintf("%s://%s%s", proto, host, port)
+	host := "webauthn-test.local"
+	port := ":443"
+	origin := fmt.Sprintf("%s://%s", proto, host)
 
 	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	createMDNSService(host) // TODO: only when running locally
 
 	wconfig := &webauthn.Config{
 		RPDisplayName: "Go Webauthn",    // Display Name for your site
@@ -105,7 +165,7 @@ func main() {
 	http.HandleFunc("POST /log", func(w http.ResponseWriter, r *http.Request) {
 		var b [1000]byte
 		n, err := r.Body.Read(b[:])
-		if err != nil {
+		if err != nil && !errors.Is(err, io.EOF) {
 			slog.Error(err.Error())
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -120,8 +180,8 @@ func main() {
 	http.Handle("GET /private", LoggedInMiddleware(http.HandlerFunc(PrivatePage)))
 
 	slog.Info("starting server", "url", origin)
-	// Generate self-signed certificates for development
-	// go run $GOROOT/src/crypto/tls/generate_cert.go --host="localhost"
+	// Generate self-signed certificates for development and trust it in your OS
+	// go run $GOROOT/src/crypto/tls/generate_cert.go -ca --host="webauthn-test.local"
 	if err := http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil); err != nil {
 		slog.Error("failed to listen and serve", "err", err.Error())
 	}
