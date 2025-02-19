@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -82,42 +81,43 @@ type Form struct {
 
 var indexTemplate = template.Must(template.New("").Parse(htmlTemplate))
 
-func createMDNSService(host string) {
+func createMDNSService(host string) error {
 	addr4, err := net.ResolveUDPAddr("udp4", mdns.DefaultAddressIPv4)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("resolve udp4 addr err: %v", err)
 	}
 
 	addr6, err := net.ResolveUDPAddr("udp6", mdns.DefaultAddressIPv6)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("resolve udp6 addr err: %v", err)
 	}
 
 	l4, err := net.ListenUDP("udp4", addr4)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("listen upd4 err: %v", err)
 	}
 
 	l6, err := net.ListenUDP("udp6", addr6)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("listen upd6 err: %v", err)
 	}
-	ip, err := getIp4()
+	ip, err := getIPv4()
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("get ip4 err: %v", err)
 	}
 	_, err = mdns.Server(ipv4.NewPacketConn(l4), ipv6.NewPacketConn(l6), &mdns.Config{
 		LocalNames:   []string{host},
 		LocalAddress: ip,
 	})
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("mdns server err: %v", err)
 	}
 
-	log.Println("mDNS service registered as " + host)
+	slog.Info("mDNS service registered", "host", host, "ip", ip)
+	return nil
 }
 
-func getIp4() (net.IP, error) {
+func getIPv4() (net.IP, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil, err
@@ -134,14 +134,20 @@ func getIp4() (net.IP, error) {
 }
 
 func main() {
-	proto := "https"
-	host := "webauthn-test.local"
-	port := ":443"
+	const (
+		proto = "https"
+		host  = "webauthn-test.local"
+		port  = ":443"
+	)
 	origin := fmt.Sprintf("%s://%s", proto, host)
 
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	createMDNSService(host) // TODO: only when running locally
+	// TODO: only when running locally
+	if err := createMDNSService(host); err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
 
 	wconfig := &webauthn.Config{
 		RPDisplayName: "Go Webauthn",    // Display Name for your site
@@ -203,7 +209,7 @@ func BeginRegistration(w http.ResponseWriter, r *http.Request) {
 
 	options, session, err := webAuthn.BeginRegistration(user)
 	if err != nil {
-		slog.Info("can't begin registration", "err", err)
+		slog.InfoContext(r.Context(), "can't begin registration", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", Form{ErrorMsg: "registration failed", Email: email.String()})
 		return
@@ -329,6 +335,7 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 
 	options, session, err := webAuthn.BeginLogin(user)
 	if err != nil {
+		slog.InfoContext(r.Context(), "can't begin login", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", Form{Email: email.Address, ErrorMsg: "login failed"})
 		return
@@ -336,6 +343,7 @@ func BeginLogin(w http.ResponseWriter, r *http.Request) {
 
 	t, err := datastore.GenSessionID()
 	if err != nil {
+		slog.ErrorContext(r.Context(), "can't generate session id", "err", err)
 		w.Header().Set("HX-Reswap", "innerHTML")
 		indexTemplate.ExecuteTemplate(w, "form", Form{Email: email.Address, ErrorMsg: "login failed"})
 		return
