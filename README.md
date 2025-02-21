@@ -9,3 +9,9 @@ $ go generate ./...
 $ go build -o passkeys
 $ ./passkeys
 ```
+
+Ensure that your browser trusts the generated self-signed certificates.
+
+Then go to https://web-authn.local
+
+![demonstration.gif](demonstration.gif)
