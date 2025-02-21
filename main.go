@@ -37,9 +37,9 @@ const htmlTemplate = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Passkey</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/htmx.org@2.0.3"></script>
-	<script src="/web/index.es5.umd.min.js"></script>
+    <script src="/web/tailwindcss.js"></script>
+    <script src="/web/htmx.js"></script>
+	<script src="/web/simplewebauthn.js"></script>
 </head>
 <body>
 {{ template "form" . }}
@@ -135,6 +135,9 @@ func getIPv4() (net.IP, error) {
 }
 
 //go:generate go run generate_cert.go -ca --host="webauthn-test.local"
+//go:generate curl -sSL -o ./web/htmx.js "https://unpkg.com/htmx.org@2.0.4/dist/htmx.js"
+//go:generate curl -sSL -o ./web/tailwindcss.js "https://unpkg.com/@tailwindcss/browser@4"
+//go:generate curl -sSL -o ./web/simplewebauthn.js "https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"
 
 func main() {
 	const (
