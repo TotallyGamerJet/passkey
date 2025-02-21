@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,9 @@ var (
 	datastore *InMem
 )
 
+//go:embed web
+var web embed.FS
+
 const htmlTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,7 +39,7 @@ const htmlTemplate = `<!DOCTYPE html>
     <title>Passkey</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.3"></script>
-	<script src="/src/index.es5.umd.min.js"></script>
+	<script src="/web/index.es5.umd.min.js"></script>
 </head>
 <body>
 {{ template "form" . }}
@@ -81,7 +85,7 @@ type Form struct {
 
 var indexTemplate = template.Must(template.New("").Parse(htmlTemplate))
 
-func createMDNSService(host string) (*mdns.Conn, error) {
+func createMDNSService(host string, pointTo net.IP) (*mdns.Conn, error) {
 	addr4, err := net.ResolveUDPAddr("udp4", mdns.DefaultAddressIPv4)
 	if err != nil {
 		return nil, fmt.Errorf("resolve udp4 addr err: %v", err)
@@ -101,20 +105,16 @@ func createMDNSService(host string) (*mdns.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen upd6 err: %v", err)
 	}
-	ip, err := getIPv4()
-	if err != nil {
-		return nil, fmt.Errorf("get ip4 err: %v", err)
-	}
 	var conn *mdns.Conn
 	conn, err = mdns.Server(ipv4.NewPacketConn(l4), ipv6.NewPacketConn(l6), &mdns.Config{
 		LocalNames:   []string{host},
-		LocalAddress: ip,
+		LocalAddress: pointTo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mdns server err: %v", err)
 	}
 
-	slog.Info("mDNS service registered", "host", host, "ip", ip)
+	slog.Info("mDNS service registered", "host", host, "ip", pointTo)
 	return conn, nil
 }
 
@@ -147,9 +147,16 @@ func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	// TODO: only when running locally
-	var conn *mdns.Conn
+
 	var err error
-	if conn, err = createMDNSService(host); err != nil {
+	var ip net.IP
+	if ip, err = getIPv4(); err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+
+	var conn *mdns.Conn
+	if conn, err = createMDNSService(host, ip); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
@@ -168,22 +175,12 @@ func main() {
 
 	datastore = NewInMem()
 
-	http.Handle("/src/", http.StripPrefix("/src/", http.FileServer(http.Dir("./web"))))
+	http.Handle("/web/", http.FileServer(http.FS(web)))
 	http.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("GET /")
+		slog.InfoContext(r.Context(), "GET /")
 		_ = indexTemplate.Execute(w, nil)
 	})
-	http.HandleFunc("POST /log", func(w http.ResponseWriter, r *http.Request) {
-		var b [1000]byte
-		n, err := r.Body.Read(b[:])
-		if err != nil && !errors.Is(err, io.EOF) {
-			slog.Error(err.Error())
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close()
-		slog.InfoContext(r.Context(), "POST /log", "msg", string(b[:n]))
-	})
+	http.HandleFunc("POST /log", LogErrors)
 	http.HandleFunc("GET /register", BeginRegistration)
 	http.HandleFunc("POST /register", FinishRegistration)
 	http.HandleFunc("GET /login", BeginLogin)
@@ -196,6 +193,17 @@ func main() {
 	if err = http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil); err != nil {
 		slog.Error("failed to listen and serve", "err", err.Error())
 	}
+}
+
+func LogErrors(w http.ResponseWriter, r *http.Request) {
+	var b [1000]byte
+	n, err := r.Body.Read(b[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		slog.ErrorContext(r.Context(), "error reading log", "err", err.Error())
+		return
+	}
+	defer r.Body.Close()
+	slog.InfoContext(r.Context(), "POST /log", "msg", string(b[:n]))
 }
 
 func BeginRegistration(w http.ResponseWriter, r *http.Request) {
